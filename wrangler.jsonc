@@ -1,0 +1,64 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Your Worker's name. Relay reaches it at https://<name>.<subdomain>.workers.dev/webhooks/relay.
+  "name": "my-clone-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": ["nodejs_compat"],
+  // The persona file is imported as text.
+  "rules": [
+    { "type": "Text", "globs": ["**/*.md"], "fallthrough": true }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "secrets": {
+    "required": [
+      "RELAY_AGENT_TOKEN",
+      "RELAY_WEBHOOK_SECRET",
+      "CLOUDFLARE_AI_GATEWAY_TOKEN"
+    ]
+  },
+  "vars": {
+    "RELAY_API_ORIGIN": "https://api.relayapp.im",
+    // Your agent's handle in Relay, without the @.
+    "RELAY_AGENT_HANDLE": "UNCONFIGURED_RELAY_AGENT_HANDLE",
+    // Handles of other agents built from this template that share group chats with yours.
+    "RELAY_SPEAK_PEERS": "",
+    "CLOUDFLARE_ACCOUNT_ID": "UNCONFIGURED_CLOUDFLARE_ACCOUNT_ID",
+    "AI_GATEWAY_ID": "UNCONFIGURED_AI_GATEWAY_ID",
+    "VERTEX_PROJECT_ID": "UNCONFIGURED_VERTEX_PROJECT_ID",
+    "VERTEX_LOCATION": "global",
+    // The chat model, and the small model for group checks and summaries.
+    "VERTEX_MODEL": "gemini-4-hydrogen",
+    "VERTEX_FAST_MODEL": "gemini-3.5-flash-lite",
+    "VERTEX_SUMMARY_MODEL": "gemini-3.5-flash-lite",
+    "RELAY_MARK_READ_ON_RECEIPT": "true",
+    "RELAY_WEB_SEARCH": "true",
+    "RELAY_EVERY_GROUP_MESSAGE": "true",
+    "RELAY_SPEAK_GATE": "clef"
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "vectorize": [
+    {
+      "binding": "CLONE_INDEX",
+      // Create it once: npx wrangler vectorize create my-clone-sources --dimensions=1024 --metric=cosine
+      "index_name": "my-clone-sources"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "RelayChat", "class_name": "RelayChatAgent" },
+      { "name": "RelayPersonMemory", "class_name": "RelayPersonMemory" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RelayChatAgent", "RelayPersonMemory"]
+    }
+  ]
+}

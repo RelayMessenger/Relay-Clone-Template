@@ -1,0 +1,8 @@
+# Agent Token from Relay Console. Relay shows it once.
+RELAY_AGENT_TOKEN=replace-with-agent-token
+
+# signing_secret from POST /v1/webhook-subscriptions. Relay shows it once.
+RELAY_WEBHOOK_SECRET=whsec_replace-with-signing-secret
+
+# Token for your authenticated AI Gateway.
+CLOUDFLARE_AI_GATEWAY_TOKEN=replace-with-ai-gateway-token

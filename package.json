@@ -1,0 +1,56 @@
+{
+  "name": "relay-clone-template",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Template for a Relay agent that speaks as one person, grounded in their own writing.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RelayMessenger/Relay-Clone-Template.git"
+  },
+  "engines": {
+    "node": ">=22.22.3"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "dry-run": "wrangler deploy --dry-run",
+    "types": "wrangler types --strict-vars=false",
+    "types:check": "wrangler types --check --strict-vars=false",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "sources": "node scripts/sources.mjs",
+    "test:sources": "node --test scripts/sources.test.mjs",
+    "test:runtime": "vitest run",
+    "test": "npm run test:sources && npm run test:runtime"
+  },
+  "dependencies": {
+    "@ai-sdk/google-vertex": "^5.0.105",
+    "@cfworker/json-schema": "^4.1.1",
+    "@cloudflare/think": "^0.23.0",
+    "@relaymessenger/chat-sdk-adapter": "^0.3.17",
+    "@relaymessenger/sdk": "^0.5.6",
+    "@relaymessenger/think": "^0.1.12",
+    "agents": "^0.33.0",
+    "ai": "^7.0.131",
+    "ai-gateway-provider": "^4.0.1",
+    "chat": "^4.41.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.3.7",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.148.0"
+  },
+  "overridesComments": {
+    "guarded-fetch@0.1.3": "Keep the existing patched undici for https://github.com/advisories/GHSA-3wwx-pv8p-q78v. Remove when guarded-fetch updates its 7.29.0 pin."
+  },
+  "overrides": {
+    "guarded-fetch@0.1.3": {
+      "undici": "7.30.0"
+    }
+  }
+}

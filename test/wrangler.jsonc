@@ -1,0 +1,59 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "clone-runtime-tests",
+  "main": "../src/index.ts",
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "rules": [
+    {
+      "type": "Text",
+      "globs": [
+        "**/*.md"
+      ],
+      "fallthrough": true
+    }
+  ],
+  "secrets": {
+    "required": [
+      "RELAY_AGENT_TOKEN",
+      "RELAY_WEBHOOK_SECRET",
+      "CLOUDFLARE_AI_GATEWAY_TOKEN"
+    ]
+  },
+  "vars": {
+    "RELAY_API_ORIGIN": "https://api.relayapp.im",
+    "AI_GATEWAY_ID": "test-gateway",
+    "CLOUDFLARE_ACCOUNT_ID": "test-account",
+    "VERTEX_PROJECT_ID": "test-project",
+    "VERTEX_LOCATION": "global",
+    "VERTEX_MODEL": "gemini-4-hydrogen",
+    "VERTEX_FAST_MODEL": "gemini-3.5-flash-lite",
+    "VERTEX_SUMMARY_MODEL": "gemini-3.5-flash-lite",
+    "RELAY_AGENT_HANDLE": "relay",
+    "RELAY_MARK_READ_ON_RECEIPT": "true",
+    "RELAY_WEB_SEARCH": "false"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RelayChat",
+        "class_name": "RelayChatAgent"
+      },
+      {
+        "name": "RelayPersonMemory",
+        "class_name": "RelayPersonMemory"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "RelayChatAgent",
+        "RelayPersonMemory"
+      ]
+    }
+  ]
+}
