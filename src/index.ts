@@ -1842,8 +1842,18 @@ export class RelayChatAgent extends Think<Bindings> {
       createRelayClient(this.env),
       this.trustedRelayTurns.getStore()?.supersessionSignal,
     );
-    const remembered = await this.memory.turn(withImages);
-    const messages = remembered?.messages ?? withImages;
+    // Search person memory using the person's own words rather than converted
+    // document text or unreadable-attachment notes added by withInboundMedia,
+    // then restore the media-enriched newest message.
+    const searchBase = context.messages.length > 0 && withImages.length === context.messages.length
+      ? [...withImages.slice(0, -1), context.messages[context.messages.length - 1]!]
+      : context.messages;
+    const remembered = await this.memory.turn(searchBase);
+    const messages = remembered
+      ? withImages.length > 0 && remembered.messages.length >= searchBase.length
+        ? [...remembered.messages.slice(0, -1), withImages[withImages.length - 1]!]
+        : remembered.messages
+      : withImages;
     return {
       // Think's Session holds the whole conversation and compacts it
       // (configureSession), so nothing is cut here.
