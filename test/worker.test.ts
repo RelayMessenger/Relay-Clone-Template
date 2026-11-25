@@ -127,10 +127,10 @@ function handle(kind: "user" | "agent" = "user") {
 function ownerHandle() {
   return {
     id: AGENT_ID,
-    handle: "relay",
+    handle: "lovelace",
     kind: "agent",
     joined_at: "2026-09-01T00:00:00.000Z",
-    display_name: "Relay",
+    display_name: "Lovelace",
     avatar_url: null,
     tagline: null,
     verified: true,
@@ -194,9 +194,9 @@ function messageEvent(options: {
       parts: [
         {
           type: "text",
-          value: options.text ?? "hey relay",
+          value: options.text ?? "hey lovelace",
           reactions: null,
-          ...(options.mention ? { mention: "relay" } : {}),
+          ...(options.mention ? { mention: "lovelace" } : {}),
         },
         ...(options.media ?? []),
       ],
@@ -216,7 +216,7 @@ function callEvent(options: {
   const updated = eventType === "call.updated";
   const ended = eventType === "call.ended";
   const person = { id: USER_ID, handle: "ada", kind: "user" } as const;
-  const agent = { id: AGENT_ID, handle: "relay", kind: "agent" } as const;
+  const agent = { id: AGENT_ID, handle: "lovelace", kind: "agent" } as const;
   return {
     api_version: "v1",
     webhook_version: "2026-08-30",
@@ -1324,7 +1324,7 @@ describe("location sharing", () => {
       agent_id: AGENT_ID,
       data: {
         shared_by: "ada",
-        shared_with: "relay",
+        shared_with: "lovelace",
         chat_id: CHAT_ID,
         began_at: "2026-09-23T17:44:45.947Z",
         ...(eventType === "location.sharing.started"
@@ -1796,7 +1796,7 @@ describe("typing waits for the decision in a group", () => {
 
   it("never types in a group turn whose first tool call is stay_silent", async () => {
     const calls = await runTurn(
-      messageEvent({ group: true, mention: true, text: "@relay not for you" }),
+      messageEvent({ group: true, mention: true, text: "@lovelace not for you" }),
       { name: "stay_silent", input: {} },
     );
     expect(calls.some(({ url }) => isModelGateway(url))).toBe(true);
@@ -1806,7 +1806,7 @@ describe("typing waits for the decision in a group", () => {
 
   it("types in a group turn after the model decides to send, before the send reaches Relay", async () => {
     const calls = await runTurn(
-      messageEvent({ group: true, mention: true, text: "@relay answer us" }),
+      messageEvent({ group: true, mention: true, text: "@lovelace answer us" }),
       { name: "send", input: { kind: "text", text: "group answer" } },
     );
     const modelIndex = calls.findIndex(({ url }) => isModelGateway(url));
@@ -1933,7 +1933,7 @@ describe("signed Relay messenger Action paths", () => {
       messageEvent({
         group: true,
         mention: true,
-        text: "@relay answer the group",
+        text: "@lovelace answer the group",
       }),
     ],
   ])("forces one text send for a signed %s Message", async (_name, event) => {
@@ -4178,7 +4178,7 @@ describe("a person's swipe-reply reaches the model", () => {
     return {
       id: TARGET_ID,
       chat_id: CHAT_ID,
-      from: "relay",
+      from: "lovelace",
       from_handle: { ...ownerHandle(), is_me: true, is_contact: true },
       parts: [
         { type: "text", value: "The flight lands at 6.", reactions: null },
@@ -4274,7 +4274,7 @@ describe("a person's swipe-reply reaches the model", () => {
     expect((await SELF.fetch(await signedRequest(event))).status).toBe(200);
     await vi.waitFor(() => expect(modelBodies).toHaveLength(1), { timeout: 15_000 });
     await vi.waitFor(async () => expect(await relayChatIsQuiescent(CHAT_ID)).toBe(true), { timeout: 15_000 });
-    expect(modelUserParts(modelBodies[0]).at(-1)?.text).toBe("hey relay");
+    expect(modelUserParts(modelBodies[0]).at(-1)?.text).toBe("hey lovelace");
     expect(calls.filter(({ url }) => relayPath(url) === `/v1/messages/${TARGET_ID}`))
       .toHaveLength(0);
   });
@@ -4496,7 +4496,7 @@ describe("Clef speak gate in the durable webhook flow", () => {
   }, 30_000);
 
   it.each([
-    ["by name", { text: "what would you make Relay" }],
+    ["by name", { text: "what would you make Lovelace" }],
     ["by mention", { mention: true }],
     ["by a reply", { reply: true, own: 1 }],
   ] as const)("this agent addressed %s takes its turn after the agent Clef ranks first", async (_, extra) => {
@@ -4565,6 +4565,88 @@ describe("Clef speak gate in the durable webhook flow", () => {
       "SELECT latest_message_id FROM relay_turn_state WHERE singleton = 1").toArray()[0]?.latest_message_id);
     expect(latest).toBe(MESSAGE_ID);
   }, 30_000);
+
+  it("preserves fromAgent across webhook headers and durable replay, and does not stack adapter closures", async () => {
+    const chatId = crypto.randomUUID();
+    const peerEvent = messageEvent({
+      chatId,
+      group: true,
+      eventId: SECOND_EVENT_ID,
+      messageId: SECOND_MESSAGE_ID,
+      senderKind: "agent",
+      text: "@other @lovelace check this",
+      sentAt: "2026-09-01T12:00:05.000Z",
+    });
+    const multiMention = {
+      ...peerEvent,
+      data: {
+        ...peerEvent.data,
+        parts: [{
+          type: "text",
+          value: "@other @lovelace check this",
+          reactions: null,
+          mention: "other",
+          mentions: [
+            { id: USER_ID, handle: "other", is_me: false, range: [0, 6] },
+            { id: AGENT_ID, handle: "lovelace", is_me: true, range: [7, 16] },
+          ],
+        }],
+      },
+    };
+    const auth = await authenticateRelayWebhook(await signedRequest(multiMention), WEBHOOK_SECRET);
+    expect(auth).not.toBeInstanceOf(Response);
+    if (auth instanceof Response) return;
+    expect(auth.admission).toEqual({
+      messageId: SECOND_MESSAGE_ID,
+      sentAt: Date.parse("2026-09-01T12:00:05.000Z"),
+      fromAgent: true,
+    });
+    expect(auth.request().headers.get(RELAY_MESSAGE_ADMISSION_HEADER)).toBe(
+      `${Date.parse("2026-09-01T12:00:05.000Z")}:${SECOND_MESSAGE_ID}:agent`,
+    );
+
+    const chat = await getAgentByName(env.RelayChat, `chat:${chatId}`);
+    await runInDurableObject(chat, async (instance, state) => {
+      const agent = instance as unknown as {
+        adapter(): { handleWebhook: unknown };
+        admitRelayMessage(admission: { messageId: string; sentAt: number; fromAgent?: true }): boolean;
+        markRelayMessageRead(delivery: { eventId: string; eventType: string; body: string }): void;
+        relayMessageIdentity(headers: Headers, header: string): unknown;
+      };
+      // Repeated adapter() calls must reuse the same handleWebhook wrapper.
+      const firstHandle = agent.adapter().handleWebhook;
+      const secondHandle = agent.adapter().handleWebhook;
+      expect(secondHandle).toBe(firstHandle);
+
+      // Malformed bodies must not throw in markRelayMessageRead.
+      expect(() => agent.markRelayMessageRead({
+        eventId: crypto.randomUUID(),
+        eventType: "message.received",
+        body: "{not-json",
+      })).not.toThrow();
+      expect(() => agent.markRelayMessageRead({
+        eventId: crypto.randomUUID(),
+        eventType: "message.received",
+        body: JSON.stringify({ data: { direction: "inbound" } }),
+      })).not.toThrow();
+
+      // Replay with cleared relay_turn_admissions must still keep fromAgent=true.
+      const personId = crypto.randomUUID();
+      expect(agent.admitRelayMessage({ messageId: personId, sentAt: 1_000 })).toBe(true);
+      const parsed = agent.relayMessageIdentity(auth.request().headers, RELAY_MESSAGE_ADMISSION_HEADER);
+      expect(parsed).toEqual({
+        messageId: SECOND_MESSAGE_ID,
+        sentAt: Date.parse("2026-09-01T12:00:05.000Z"),
+        fromAgent: true,
+      });
+      state.storage.sql.exec("DELETE FROM relay_turn_admissions WHERE message_id = ?", SECOND_MESSAGE_ID);
+      expect(agent.admitRelayMessage(parsed as { messageId: string; sentAt: number; fromAgent?: true })).toBe(false);
+      const latest = state.storage.sql.exec<{ latest_message_id: string }>(
+        "SELECT latest_message_id FROM relay_turn_state WHERE singleton = 1",
+      ).toArray()[0]?.latest_message_id;
+      expect(latest).toBe(personId);
+    });
+  });
 
   it("Clef error: runs the normal turn", async () => {
     const test = await setup({ error: true });
@@ -4893,6 +4975,14 @@ describe("the history the model reads", () => {
     }
     await settleOutbound(calls);
     expect(modelBodies).toHaveLength(TURNS + 1);
+    // Vertex caches a shared prefix. Compare what actually crossed the gateway,
+    // including tool declaration order, not just the agent's getSystemPrompt().
+    const prefixes = modelBodies.map((body) => {
+      const [{ query }] = JSON.parse(body);
+      expect(query.tools.length).toBeGreaterThan(0);
+      return JSON.stringify([query.systemInstruction, query.tools]);
+    });
+    expect(new Set(prefixes).size).toBe(1);
 
     let persona = "";
     await runInDurableObject(await getAgentByName(env.RelayChat, `chat:${CHAT_ID}`), (instance) => {

@@ -4,9 +4,9 @@ import { z } from "zod";
 
 import { generateText } from "ai";
 
+import { messageSummary } from "@relaymessenger/think";
 import type { Bindings, CloneBindings } from "./env";
 import { relayFastModel, relayModel } from "./model";
-import { messageSummary } from "./reactions";
 
 const groupMessageSchema = z.object({
   event_type: z.literal("message.received"),
@@ -25,7 +25,13 @@ const groupMessageSchema = z.object({
       timezone: z.string().nullable().optional(),
     }),
     parts: z.array(z.object({
-      type: z.string(), value: z.unknown().optional(), mention: z.string().nullable().optional(),
+      type: z.string(),
+      value: z.unknown().optional(),
+      mention: z.string().nullable().optional(),
+      mentions: z.array(z.object({
+        handle: z.string(),
+        is_me: z.boolean().optional(),
+      })).nullable().optional(),
     })),
     reply_to: z.object({ message_id: z.string() }).nullable().optional(),
   }),
@@ -261,14 +267,34 @@ async function replyTarget(
   return recent.find((item) => item.id === id) ?? await relay.messages.retrieve(id);
 }
 
+/** Every handle mentioned in a text part: the `mentions` array, or legacy `mention`. */
+function partMentions(part: {
+  type: string;
+  mention?: string | null;
+  mentions?: ReadonlyArray<{ handle: string; is_me?: boolean }> | null;
+}): string[] {
+  if (part.type !== "text") return [];
+  if (Array.isArray(part.mentions)) {
+    return part.mentions.map((item) => item.handle).filter(Boolean);
+  }
+  return part.mention ? [part.mention] : [];
+}
+
 /** Whether a message tags this agent or replies to one of its messages. */
 async function tagsOrRepliesTo(
-  message: { parts: ReadonlyArray<{ type: string; mention?: string | null }>; reply_to?: { message_id: string } | null },
+  message: {
+    parts: ReadonlyArray<{
+      type: string;
+      mention?: string | null;
+      mentions?: ReadonlyArray<{ handle: string; is_me?: boolean }> | null;
+    }>;
+    reply_to?: { message_id: string } | null;
+  },
   recent: Message[],
   relay: SpeakGateDependencies["relay"],
   ownHandle: string,
 ): Promise<boolean> {
-  if (message.parts.some((part) => part.type === "text" && part.mention === ownHandle)) return true;
+  if (message.parts.some((part) => partMentions(part).includes(ownHandle))) return true;
   if (!message.reply_to) return false;
   return (await replyTarget(message.reply_to.message_id, recent, relay)).is_from_me;
 }
@@ -360,7 +386,7 @@ export async function prepareSpeakGate(
     if (own < 0) throw new Error("This agent is not an active member of the chat");
     // Who the message gives the turn to: mentions, the author of the message
     // it replies to, and members named in its text.
-    const addressed = new Set(message.parts.flatMap((part) => part.type === "text" && part.mention ? [part.mention] : []));
+    const addressed = new Set(message.parts.flatMap(partMentions));
     if (message.reply_to) {
       const target = await replyTarget(message.reply_to.message_id, recent, deps.relay);
       if (target.is_from_me) addressed.add(owner.handle);

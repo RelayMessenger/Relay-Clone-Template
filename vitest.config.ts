@@ -36,9 +36,9 @@ export default defineConfig({
       },
       miniflare: {
         bindings: {
-          // Generic transport fixtures use @relay handles. Group gate tests
+          // Generic transport fixtures use @lovelace handles. Group gate tests
           // enable the gate explicitly.
-          RELAY_AGENT_HANDLE: "relay",
+          RELAY_AGENT_HANDLE: "lovelace",
           RELAY_EVERY_GROUP_MESSAGE: "false",
           RELAY_SPEAK_GATE: "",
           SHIPPED_VARS,
