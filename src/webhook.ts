@@ -72,6 +72,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Format an admission/serial header value, preserving the agent-sender marker. */
+export function formatRelayMessageIdentity(admission: RelayMessageAdmission): string {
+  return `${admission.sentAt}:${admission.messageId}${admission.fromAgent ? ":agent" : ""}`;
+}
+
+function partMentionsOwner(part: Record<string, unknown>, ownerHandle: string): boolean {
+  if (part.type !== "text") return false;
+  if (Array.isArray(part.mentions)) {
+    return part.mentions.some((entry) =>
+      isRecord(entry)
+      && (typeof entry.is_me === "boolean"
+        ? entry.is_me
+        : entry.handle === ownerHandle)
+    );
+  }
+  return part.mention === ownerHandle;
+}
+
 function relayMessageIngress(
   envelope: Record<string, unknown>,
   everyGroupMessage: boolean,
@@ -118,9 +136,7 @@ function relayMessageIngress(
     actionable = isRecord(owner)
       && typeof owner.handle === "string"
       && data.parts.some((part) =>
-        isRecord(part)
-        && part.type === "text"
-        && part.mention === owner.handle
+        isRecord(part) && partMentionsOwner(part, owner.handle as string)
       );
   }
   const sentAt = typeof data.sent_at === "string"
@@ -254,7 +270,7 @@ export async function authenticateRelayWebhook(
   if (serial) {
     headers.set(
       RELAY_MESSAGE_SERIAL_HEADER,
-      `${serial.sentAt}:${serial.messageId}`,
+      formatRelayMessageIdentity(serial),
     );
   } else {
     headers.delete(RELAY_MESSAGE_SERIAL_HEADER);
@@ -262,7 +278,7 @@ export async function authenticateRelayWebhook(
   if (admission) {
     headers.set(
       RELAY_MESSAGE_ADMISSION_HEADER,
-      `${admission.sentAt}:${admission.messageId}`,
+      formatRelayMessageIdentity(admission),
     );
   } else {
     headers.delete(RELAY_MESSAGE_ADMISSION_HEADER);

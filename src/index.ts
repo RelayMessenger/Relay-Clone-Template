@@ -37,7 +37,6 @@ import {
 } from "@relaymessenger/think/actions";
 import { searchSourcesActions } from "./search-sources-action";
 import { chatEventContext, RELAY_CHAT_CONTEXT_EVENT_TYPES } from "@relaymessenger/think";
-import { RELAY_CHAT_OPENED_EVENT } from "./chat-opened";
 import { RelayGenerationActivities } from "@relaymessenger/think";
 import {
   type InboundMedia,
@@ -45,6 +44,7 @@ import {
   inlineInboundMedia,
   NO_INBOUND_MEDIA,
   withInboundMedia,
+  withRecentHistoryImages,
 } from "@relaymessenger/think";
 import { generateText, type LanguageModel, type ToolSet, type UIMessage, wrapLanguageModel } from "ai";
 
@@ -72,7 +72,7 @@ import { createGroupCompactFunction } from "./group-compaction";
 import { asksEveryMember, pickCloneReaction, prepareSpeakGate, type SpeakDecision } from "./speak-gate";
 import { AGENT_THINKING_LEVEL, agentSystemPrompt } from "./personas";
 import { paymentEventContext, RELAY_PAYMENT_EVENT_TYPES } from "@relaymessenger/think";
-import { RELAY_WEBHOOK_PATH } from "./subscription";
+import { RELAY_CHAT_OPENED_EVENT, RELAY_WEBHOOK_PATH } from "./subscription";
 import { withLocationShares } from "@relaymessenger/think";
 import { withCardReplies } from "@relaymessenger/think";
 import { withSelectionReplies } from "@relaymessenger/think";
@@ -110,6 +110,7 @@ import {
 } from "@relaymessenger/think";
 import {
   authenticateRelayWebhook,
+  formatRelayMessageIdentity,
   RELAY_MESSAGE_ADMISSION_HEADER,
   RELAY_MESSAGE_SERIAL_HEADER,
   type RelayMessageAdmission,
@@ -963,10 +964,15 @@ export class RelayChatAgent extends Think<Bindings> {
       const headers = new Headers(
         JSON.parse(row.headers_json) as Record<string, string>,
       );
+      const fromAgent = this.relayRowFromAgent(row);
       if (row.serial_message_id !== null && row.serial_sent_at !== null) {
         headers.set(
           RELAY_MESSAGE_SERIAL_HEADER,
-          `${row.serial_sent_at}:${row.serial_message_id}`,
+          formatRelayMessageIdentity({
+            messageId: row.serial_message_id,
+            sentAt: row.serial_sent_at,
+            ...(fromAgent ? { fromAgent: true as const } : {}),
+          }),
         );
       }
       if (
@@ -975,7 +981,11 @@ export class RelayChatAgent extends Think<Bindings> {
       ) {
         headers.set(
           RELAY_MESSAGE_ADMISSION_HEADER,
-          `${row.admission_sent_at}:${row.admission_message_id}`,
+          formatRelayMessageIdentity({
+            messageId: row.admission_message_id,
+            sentAt: row.admission_sent_at,
+            ...(fromAgent ? { fromAgent: true as const } : {}),
+          }),
         );
       }
       const response = await this.relayTurnTiming.run(timing, () =>
@@ -1044,20 +1054,46 @@ export class RelayChatAgent extends Think<Bindings> {
   private markRelayMessageRead(delivery: RelayWebhookDelivery): void {
     if (delivery.eventType !== "message.received") return;
     if (!relayMarkReadOnReceipt(this.env)) return;
-    const data = JSON.parse(delivery.body).data;
-    if (data.direction === "outbound" || data.sender_handle.is_me === true) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(delivery.body);
+    } catch {
+      return;
+    }
+    const data = (typeof parsed === "object" && parsed !== null
+      ? (parsed as { data?: unknown }).data
+      : undefined) as {
+      direction?: unknown;
+      sender_handle?: { is_me?: unknown } | null;
+      chat?: { id?: unknown } | null;
+    } | undefined;
+    if (!data || typeof data !== "object") return;
+    if (data.direction === "outbound" || data.sender_handle?.is_me === true) return;
+    const chatId = data.chat?.id;
+    if (typeof chatId !== "string" || !UUID.test(chatId)) return;
     const key = `read:${delivery.eventId}`;
-    const task = createRelayClient(this.env).chats.markAsRead(data.chat.id)
+    const task = createRelayClient(this.env).chats.markAsRead(chatId)
       .catch((error: unknown) => {
         console.warn(JSON.stringify({
           event: "relay_agent_read_failed",
-          chat_id: data.chat.id,
+          chat_id: chatId,
           error: error instanceof Error ? error.message : String(error),
         }));
       })
       .finally(() => { this.relayStampTasks.delete(key); });
     this.relayStampTasks.set(key, task);
     this.ctx.waitUntil(task);
+  }
+
+  /** Whether a stored message.received row came from another agent. */
+  private relayRowFromAgent(row: RelayEventRow): boolean {
+    if (row.event_type !== "message.received" || !row.body) return false;
+    try {
+      const parsed = JSON.parse(row.body) as { data?: { sender_handle?: { kind?: unknown } } };
+      return parsed.data?.sender_handle?.kind === "agent";
+    } catch {
+      return false;
+    }
   }
 
   private ensureRelayEventSchema(): void {
@@ -1796,12 +1832,32 @@ export class RelayChatAgent extends Think<Bindings> {
     // Gemini looks at the photo, video, or voice memo instead of reading about
     // it.
     const media = await this.relayInboundMedia();
-    const remembered = await this.memory.turn(context.messages);
-    const messages = remembered?.messages ?? context.messages;
+    // Photos sent earlier in the chat stay visible too (up to three from the
+    // last 20 Messages, fetched fresh by attachment id), on the Message that
+    // carried them. Both run on the stored history, before person memory
+    // inserts its own Message.
+    const withImages = await withRecentHistoryImages(
+      withInboundMedia(context.messages, media),
+      this.messages,
+      createRelayClient(this.env),
+      this.trustedRelayTurns.getStore()?.supersessionSignal,
+    );
+    // Search person memory using the person's own words rather than converted
+    // document text or unreadable-attachment notes added by withInboundMedia,
+    // then restore the media-enriched newest message.
+    const searchBase = context.messages.length > 0 && withImages.length === context.messages.length
+      ? [...withImages.slice(0, -1), context.messages[context.messages.length - 1]!]
+      : context.messages;
+    const remembered = await this.memory.turn(searchBase);
+    const messages = remembered
+      ? withImages.length > 0 && remembered.messages.length >= searchBase.length
+        ? [...remembered.messages.slice(0, -1), withImages[withImages.length - 1]!]
+        : remembered.messages
+      : withImages;
     return {
       // Think's Session holds the whole conversation and compacts it
       // (configureSession), so nothing is cut here.
-      messages: withoutPastThoughtSignatures(withInboundMedia(messages, media)),
+      messages: withoutPastThoughtSignatures(messages),
       ...(remembered ? { tools: remembered.tools } : {}),
       activeTools: [
         ...Object.keys(context.tools).filter((name) => {
@@ -1964,36 +2020,39 @@ export class RelayChatAgent extends Think<Bindings> {
   }
 
   private adapter(): RelayAdapter {
-    this.relayAdapter ??= withCardReplies(withLocationShares(withSelectionReplies(withEveryGroupMessage(createRelayAdapter({
-      token: requireRelayToken(this.env),
-      webhookSecret: requireRelayWebhookSecret(this.env),
-      baseUrl: this.env.RELAY_API_ORIGIN,
-      userName: this.env.RELAY_AGENT_HANDLE,
-      typing: false,
-      // The public Worker verifies the normal five-minute Standard Webhooks
-      // window before durable acceptance. This Chat's own scheduled
-      // processRelayEvent replays that same verified body after a transient
-      // outage, so the internal Chat SDK hop allows its bounded recovery
-      // horizon.
-      signatureToleranceSeconds: RELAY_INTERNAL_SIGNATURE_TOLERANCE_SECONDS,
-      // Supersession is owned by the durable chronological admission below;
-      // Think 0.17 does not consume Chat SDK's adapter cancellation signal.
-      abortActiveTurnOnReceipt: false,
-      // This adapter option awaits the REST call before dispatch. Read is
-      // issued by processRelayEvent after delivery instead.
-      markReadOnReceipt: false,
-    }), () => everyGroupMessageEnabled(this.env)))));
-    // relay_event owns delivery dedupe: each event_id is committed once and
-    // reaches Chat SDK only through processRelayEvent. Chat SDK's own dedupe
-    // key is written before its lock and handlers run, so a first pass that
-    // failed after that write turned the durable retry into an acknowledged
-    // duplicate and the Message was never answered.
-    // deduplicate is Chat SDK's WebhookOptions switch for a caller that
-    // deduplicates for itself; the native Action ledger stays keyed by the
-    // Message, so a re-run is still one reply.
-    const handleWebhook = this.relayAdapter.handleWebhook.bind(this.relayAdapter);
-    this.relayAdapter.handleWebhook = (request, options) =>
-      handleWebhook(request, { ...options, deduplicate: false });
+    if (!this.relayAdapter) {
+      const adapter = withCardReplies(withLocationShares(withSelectionReplies(withEveryGroupMessage(createRelayAdapter({
+        token: requireRelayToken(this.env),
+        webhookSecret: requireRelayWebhookSecret(this.env),
+        baseUrl: this.env.RELAY_API_ORIGIN,
+        userName: this.env.RELAY_AGENT_HANDLE,
+        typing: false,
+        // The public Worker verifies the normal five-minute Standard Webhooks
+        // window before durable acceptance. This Chat's own scheduled
+        // processRelayEvent replays that same verified body after a transient
+        // outage, so the internal Chat SDK hop allows its bounded recovery
+        // horizon.
+        signatureToleranceSeconds: RELAY_INTERNAL_SIGNATURE_TOLERANCE_SECONDS,
+        // Supersession is owned by the durable chronological admission below;
+        // Think 0.17 does not consume Chat SDK's adapter cancellation signal.
+        abortActiveTurnOnReceipt: false,
+        // This adapter option awaits the REST call before dispatch. Read is
+        // issued by processRelayEvent after delivery instead.
+        markReadOnReceipt: false,
+      }), () => everyGroupMessageEnabled(this.env)))));
+      // relay_event owns delivery dedupe: each event_id is committed once and
+      // reaches Chat SDK only through processRelayEvent. Chat SDK's own dedupe
+      // key is written before its lock and handlers run, so a first pass that
+      // failed after that write turned the durable retry into an acknowledged
+      // duplicate and the Message was never answered.
+      // deduplicate is Chat SDK's WebhookOptions switch for a caller that
+      // deduplicates for itself; the native Action ledger stays keyed by the
+      // Message, so a re-run is still one reply.
+      const handleWebhook = adapter.handleWebhook.bind(adapter);
+      adapter.handleWebhook = (request, options) =>
+        handleWebhook(request, { ...options, deduplicate: false });
+      this.relayAdapter = adapter;
+    }
     return this.relayAdapter;
   }
 
@@ -2123,13 +2182,18 @@ export class RelayChatAgent extends Think<Bindings> {
   ): RelayMessageAdmission | undefined {
     const value = headers.get(header);
     if (!value) return;
-    const separator = value.indexOf(":");
-    if (separator <= 0) return;
-    const sentAt = Number(value.slice(0, separator));
-    const messageId = value.slice(separator + 1);
-    return Number.isSafeInteger(sentAt) && sentAt >= 0 && UUID.test(messageId)
-      ? { messageId, sentAt }
-      : undefined;
+    const parts = value.split(":");
+    if (parts.length !== 2 && !(parts.length === 3 && parts[2] === "agent")) {
+      return;
+    }
+    const sentAt = Number(parts[0]);
+    const messageId = parts[1]!;
+    if (!Number.isSafeInteger(sentAt) || sentAt < 0 || !UUID.test(messageId)) {
+      return;
+    }
+    return parts[2] === "agent"
+      ? { messageId, sentAt, fromAgent: true }
+      : { messageId, sentAt };
   }
 
   /** A person's Message newer than this one has landed. */

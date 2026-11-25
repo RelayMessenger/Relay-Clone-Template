@@ -202,6 +202,7 @@ describe("speak gate", () => {
     const cases: Array<[Record<string, unknown>, ((test: ReturnType<typeof setup>) => void)?]> = [
       [{ parts: [{ type: "text", value: "charles what do you think" }] }],
       [{ parts: [{ type: "text", value: "Charles", mention: "charlesbabbage" }] }],
+      [{ parts: [{ type: "text", value: "@marysomerville @charlesbabbage thoughts?", mention: "marysomerville", mentions: [{ handle: "marysomerville", is_me: false }, { handle: "charlesbabbage", is_me: true }] }] }],
       [{ reply_to: { message_id: "old" } }, (test) => test.retrieve.mockResolvedValueOnce({ is_from_me: true })],
     ];
     for (const [extra, prepare] of cases) {
@@ -275,7 +276,7 @@ describe("speak gate", () => {
     expect(await prepareSpeakGate(test.env, fromAgent(test.event), test.deps)).toEqual({ kind: "silent" });
     expect(test.saved()?.spoke).toBe(false);
     const tagged = setup(0.25, [0.3, 0.1]);
-    const tag = { parts: [{ type: "text", value: "Charles?", mention: "charlesbabbage" }] };
+    const tag = { parts: [{ type: "text", value: "Mary and Charles?", mention: "marysomerville", mentions: [{ handle: "marysomerville", is_me: false }, { handle: "charlesbabbage", is_me: true }] }] };
     expect(await prepareSpeakGate(tagged.env, fromAgent(tagged.event, tag), tagged.deps)).toEqual({ kind: "deferred", delay: 10 });
     tagged.messages.push({ id: "15", is_from_me: true, from_handle: { display_name: "Charles Babbage" }, parts: [{ type: "text", value: "my answer" }] } as Message);
     await vi.advanceTimersByTimeAsync(10_000);

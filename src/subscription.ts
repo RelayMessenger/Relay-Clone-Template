@@ -17,7 +17,8 @@ import {
   RELAY_REACTION_EVENT_TYPES,
 } from "@relaymessenger/think";
 
-import { RELAY_CHAT_OPENED_EVENT } from "./chat-opened";
+/** The event that opens a Chat. */
+export const RELAY_CHAT_OPENED_EVENT = "chat.created";
 
 /** Where Relay delivers the agent's webhooks on this Worker's own hostname. */
 export const RELAY_WEBHOOK_PATH = "/webhooks/relay";

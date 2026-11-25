@@ -31,7 +31,7 @@
     "VERTEX_MODEL": "gemini-4-hydrogen",
     "VERTEX_FAST_MODEL": "gemini-3.5-flash-lite",
     "VERTEX_SUMMARY_MODEL": "gemini-3.5-flash-lite",
-    "RELAY_AGENT_HANDLE": "relay",
+    "RELAY_AGENT_HANDLE": "lovelace",
     "RELAY_MARK_READ_ON_RECEIPT": "true",
     "RELAY_WEB_SEARCH": "false"
   },
